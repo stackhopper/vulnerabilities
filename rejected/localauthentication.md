@@ -45,4 +45,4 @@ The `LocalAuthentication` framework fails and exits, not allowing the user to pe
 
 # Proof of Concept
 
-/evidence of the Denial of Service targeting the LocalAuthentication framework's authorization prompt for privileged access-based changes can be seen [here](https://youtu.be/u1hATKAYsq0).
+Evidence of the Denial of Service targeting the LocalAuthentication framework's authorization prompt for privileged access-based changes can be seen [here](https://youtu.be/u1hATKAYsq0).
