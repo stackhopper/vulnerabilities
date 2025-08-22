@@ -32,7 +32,7 @@ There is a vulnerability on the 'Share' button located at the Safari Web View's 
 
 A malicious remote server can serve files with these names but with different kinds of content, and said content will be rendered on a sandboxed WebKit container without any user interaction or TCC permissions prompting.
 
-The reason this happens is because the HTTP requests issued by `com.apple.WorkflowKit.ShortcutsViewService` framework which are processed by `com.apple.WebKit.Networking` accept any type of content due to the value `*/*` on the `Accept` header. Attached is an example communication with a Burp Suite Collaborator domain.
+The reason this happens is because the HTTP requests issued by `com.apple.WorkflowKit.ShortcutsViewService` framework which are processed by `com.apple.WebKit.Networking` accept any type of content due to lack of `Content-Type` header validation and to a lesser extent, the value `*/*` on the `Accept` header. Attached is an example communication with a Burp Suite Collaborator domain.
 
 <img width="1158" alt="Image" src="https://github.com/user-attachments/assets/f05bd69c-6adb-4485-947e-7f60ad9b0ee8" />
 <img width="1157" alt="Image" src="https://github.com/user-attachments/assets/f15085c2-13e2-43ec-a98c-1ea8ebb568c9" />
