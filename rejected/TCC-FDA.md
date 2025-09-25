@@ -111,6 +111,7 @@ _Fig. 3 - Frida thread backtrace log upon breaking on `-[TCCDBundle initWithURL:
 The `tccd` method with symbol tccd`___lldb_unnamed_symbol539` starts the `tccd` transaction with the chosen bundle's full path (via UI file picker):
 
 <img width="891" height="529" alt="Image" src="https://github.com/user-attachments/assets/70ccf1c6-c454-49fd-920c-5747a2ef4ff1" />
+
 _Fig. 4 - Scenario 2 reproduction via `lldb` session (data stored on register **x0**)_
 
 Afterwards, we see that the bug manifests from the CoreFoundation `_CFBundleCopyInfoPlistURL` method, which renders the bundle ID registered with `lsregister` in `System Settings.app`. The behavior can be seen upon replicating scenario #2 (adding `fda-alternative.app` to the Full Disk Access allowed applications list on `System Settings.app`): with the following breakpoint in `lldb`:
